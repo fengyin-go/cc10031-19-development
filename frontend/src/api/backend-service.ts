@@ -1,6 +1,7 @@
 import { request } from './client'
 import { moduleMeta } from '@/data/modules'
 import type { ActionResult, EntryRow, OverviewResult, PageResult } from '@/data/types'
+import type { RecoveryLedgerRow } from '@/domain/recovery_track'
 
 export { moduleMeta }
 
@@ -104,5 +105,30 @@ export async function triggerPipeline(lifecycle: string): Promise<Record<string,
 export async function loadRecoveryStats(): Promise<Record<string, unknown>> {
   const response = await request('/api/recovery')
   if (!response.ok) throw new Error('恢复状态查询失败')
+  return await response.json()
+}
+
+/** 异常恢复追踪：按流程名称、执行编号、恢复状态查询联合台账 */
+export async function loadRecoveryLedger(
+  filters: Record<string, string> = {},
+): Promise<{ count: number; items: RecoveryLedgerRow[]; policy: string }> {
+  const query = new URLSearchParams(
+    Object.fromEntries(Object.entries(filters).filter(([, v]) => v.trim())),
+  ).toString()
+  const response = await request(`/api/recovery-track?${query}`)
+  if (!response.ok) throw new Error('异常恢复追踪台账读取失败')
+  return await response.json()
+}
+
+/** 异常恢复追踪：处理一个追踪项，确认终态收敛（重复提交只保留一条结果） */
+export async function processRecoveryItem(
+  execKey: string,
+  action: string,
+  policy?: string,
+): Promise<Record<string, unknown>> {
+  const response = await request('/api/recovery-track/process', {
+    method: 'POST',
+    body: JSON.stringify({ exec_key: execKey, action, policy }),
+  })
   return await response.json()
 }

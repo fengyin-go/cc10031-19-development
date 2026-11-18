@@ -5,13 +5,15 @@
 """
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.routers import ROUTERS
 from app.store import store
-from app.services import runtime_session, callback_hook
+from app.services import runtime_session, callback_hook, recovery_track
 
 app = FastAPI(title="RPA流程自动化中心", version="1.0.0")
 
@@ -48,6 +50,14 @@ def nodestats(module: str | None = Query(default=None)) -> dict[str, object]:
     if module:
         svc = service_for(module)
         if svc is None:
+            # 非模块的跨模块数据能力
+            extra = {
+                "runtime_session": runtime_session,
+                "callback_hook": callback_hook,
+                "recovery_track": recovery_track,
+            }.get(module)
+            if extra is not None:
+                return extra.domain_snapshot()
             return {"error": f"未知模块: {module}"}
         return svc.domain_snapshot()
 
@@ -59,6 +69,7 @@ def nodestats(module: str | None = Query(default=None)) -> dict[str, object]:
     # 附加非模块服务
     snapshots["runtime_session"] = runtime_session.domain_snapshot()
     snapshots["callback_hook"] = callback_hook.domain_snapshot()
+    snapshots["recovery_track"] = recovery_track.domain_snapshot()
 
     # 存储基础设施概览
     infra = {
@@ -127,6 +138,64 @@ def collect_records(batch_ref: str | None = Query(default=None),
 def recovery_stats() -> dict[str, object]:
     """失败恢复状态查询。"""
     return store.recovery.snapshot()
+
+
+# ---- 异常恢复追踪：异常事件 × 执行日志 × 恢复记录 联合台账 ----
+
+@app.get("/api/recovery-track")
+def recovery_track_ledger(
+    process_name: str | None = Query(default=None, alias="流程名称"),
+    exec_no: str | None = Query(default=None, alias="执行编号"),
+    recovery_status: str | None = Query(default=None, alias="恢复状态"),
+    keyword: str | None = Query(default=None),
+    policy: str | None = Query(default=None),
+) -> dict[str, object]:
+    """异常事件台账数据集：按流程名称、执行编号、恢复状态筛选联合台账。
+
+    读取异常事件数据、执行日志与恢复记录数据，按共享执行键解析同一
+    执行对象的当前终态，返回带清理与恢复证据的台账行。
+    """
+    items = recovery_track.query_ledger(
+        process_name=process_name,
+        exec_no=exec_no,
+        recovery_status=recovery_status,
+        keyword=keyword,
+        policy=policy,
+    )
+    return {
+        "count": len(items),
+        "items": items,
+        "policy": policy or recovery_track.DEFAULT_POLICY,
+        "conflict_policies": list(recovery_track.CONFLICT_POLICIES),
+    }
+
+
+@app.get("/api/recovery-track/{exec_key}")
+def recovery_track_item(exec_key: str) -> dict[str, object]:
+    """按执行键定位一条台账记录，核对恢复过程的完整终点。"""
+    row = recovery_track.get_ledger_row(exec_key)
+    if row is None:
+        return {"ok": False, "message": f"执行键 {exec_key} 没有关联的异常恢复数据"}
+    return {"ok": True, "item": row}
+
+
+@app.post("/api/recovery-track/process")
+def recovery_track_process(payload: dict[str, Any]) -> dict[str, object]:
+    """处理一个异常恢复追踪项：确认终态收敛 + 联动核对 + 幂等。
+
+    请求体：{"exec_key": "EXEC-0001", "action": "标记恢复|忽略事件|执行归档",
+             "policy": "cleanup_first|recovery_first"(可选)}
+    """
+    exec_key = str(
+        payload.get("exec_key")
+        or payload.get("执行键")
+        or payload.get("执行编号")
+        or ""
+    )
+    action = str(payload.get("action") or "")
+    policy = payload.get("policy")
+    result = recovery_track.process_item(exec_key, action, policy=policy)
+    return result
 
 
 @app.get("/api/runtime-sessions")

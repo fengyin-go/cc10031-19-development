@@ -312,6 +312,11 @@ class FailureRecovery:
         with self._lock:
             return len(self._entries)
 
+    def entries(self) -> list[RecoveryEntry]:
+        """返回全部恢复记录快照，供异常恢复追踪联合台账读取。"""
+        with self._lock:
+            return list(self._entries)
+
     def log(self, module: str, batch_ref: str, step: str,
             error_detail: str, max_attempts: int = 3) -> RecoveryEntry:
         with self._lock:

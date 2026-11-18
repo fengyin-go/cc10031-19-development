@@ -79,5 +79,18 @@ npm run dev
 - 列表接口统一返回 `{ items, total, page, size }`，动作接口统一返回 `{ ok, message }`。
 - 状态流转只允许在 `app/services` 里改，路由层不做业务判断。
 
+## 异常恢复追踪（跨模块数据能力）
+
+- `backend/app/services/recovery_track.py`：把异常事件、执行日志、恢复记录按共享
+  执行键（执行编号）连成可筛选的异常事件台账数据集；同一异常只解析一个当前终态。
+- 清理回执（忽略事件 / 执行归档）与恢复事件（标记恢复 / 恢复管理器确认）同时更新
+  同一检查点时，按 `cleanup_first` / `recovery_first` 策略让一方终态获胜、另一方延后，
+  两种处理方式都只保留一个确认终态。
+- 接口：`GET /api/recovery-track`（按流程名称、执行编号、恢复状态筛选）、
+  `GET /api/recovery-track/{exec_key}`、`POST /api/recovery-track/process`
+  （处理项：终态收敛 + 联动核对，重复提交只保留一条结果）。
+- 前端页面：`/recovery-track`（`frontend/src/views/RecoveryTrackView.vue`，
+  领域逻辑在 `frontend/src/domain/recovery_track.ts`）。
+
 领域：数据工程
 子方向：数据采集、爬虫与RPA
